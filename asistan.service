@@ -1,0 +1,22 @@
+[Unit]
+Description=Asistan Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=asistan
+Group=asistan
+WorkingDirectory=/opt/asistan-bot
+Environment=PATH=/opt/asistan-bot/venv/bin
+ExecStart=/opt/asistan-bot/venv/bin/python bot.py
+Restart=always
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
