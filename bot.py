@@ -44,16 +44,22 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     
     # Kullanıcıyı veritabanına kaydet
-    database.get_or_create_user(
+    db_user = database.get_or_create_user(
         telegram_id=user.id,
         username=user.username,
         first_name=user.first_name
     )
     
+    # Timezone bilgisini al
+    user_tz = db_user.get('timezone', 'Europe/Istanbul')
+    
     welcome_message = f"""
 🌟 *Merhaba {user.first_name}!*
 
 Ben senin kişisel asistan botunun! Farklı modüllerle sana yardımcı olabilirim.
+
+🕒 *Zaman Dilimi:* `{user_tz}`
+Eğer bu yanlışsa: `/timezone Europe/Istanbul` şeklinde değiştirebilirsin.
 
 *📱 Modüller:*
 
@@ -75,6 +81,41 @@ Hadi başlayalım! Hangi modülü kullanmak istersin? 💪
     await update.message.reply_text(welcome_message, parse_mode='Markdown')
 
 
+async def timezone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Kullanıcı zaman dilimini ayarla"""
+    user = update.effective_user
+    
+    if not context.args:
+        await update.message.reply_text(
+            "⚠️ Lütfen bir zaman dilimi belirtin.\n\n"
+            "Örnek: `/timezone Europe/Istanbul`\n"
+            "Dünya saatleri için IANA formatı kullanın.",
+            parse_mode='Markdown'
+        )
+        return
+
+    new_timezone = context.args[0]
+    
+    try:
+        import pytz
+        pytz.timezone(new_timezone)
+    except Exception:
+        await update.message.reply_text(
+            "❌ Geçersiz zaman dilimi! `Europe/Istanbul`, `Europe/London` gibi geçerli bir bölge girin.",
+            parse_mode='Markdown'
+        )
+        return
+
+    db_user = database.get_or_create_user(user.id)
+    database.update_user_timezone(db_user['id'], new_timezone)
+    
+    await update.message.reply_text(
+        f"✅ Zaman dilimi güncellendi: `{new_timezone}`\n"
+        f"Hatırlatmalar artık bu saate göre gönderilecek.",
+        parse_mode='Markdown'
+    )
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Yardım komutu"""
     user = update.effective_user
@@ -84,7 +125,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         first_name=user.first_name
     )
     
-    # Kullanıcının aktif modülünü al
     current_module = database.get_user_current_module(db_user['id'])
     
     help_message = f"""
@@ -102,10 +142,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 *Genel Komutlar:*
 `/start` - Ana menü
-`/help` veya `/yardim` - Bu yardım mesajı
-`/modul` - Aktif modülü göster
+`/help` - Yardım
+`/timezone` - Saat ayarı
+`/modul` - Aktif modül
 
-Her modülün kendi özel komutları ve özellikleri var. 
 Modül değiştirmek için yukarıdaki komutları kullan!
 """
     
@@ -236,6 +276,7 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("yardim", help_command))
     application.add_handler(CommandHandler("modul", modul_command))
+    application.add_handler(CommandHandler("timezone", timezone_command))
     
     # Modül komut işleyicileri
     application.add_handler(CommandHandler("asistan", switch_to_asistan))
