@@ -1,5 +1,5 @@
 """
-Veritabani islemleri - SQLite ile aliskanlik ve kullanici yonetimi
+Veritabanı işlemleri - SQLite ile alışkanlık ve kullanıcı yönetimi
 """
 import sqlite3
 from datetime import datetime, date, timedelta
@@ -8,27 +8,37 @@ from config import DATABASE_PATH
 
 
 def get_connection():
-    """Veritabani baglantisi olustur"""
+    """Veritabanı bağlantısı oluştur"""
     conn = sqlite3.connect(DATABASE_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def init_database():
-    """Veritabani tablolarini olustur"""
+    """Veritabanı tablolarını oluştur"""
     conn = get_connection()
     cursor = conn.cursor()
     
+    # Kullanıcılar tablosu
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             telegram_id INTEGER UNIQUE NOT NULL,
             username TEXT,
             first_name TEXT,
+            timezone TEXT DEFAULT 'Europe/Istanbul',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     
+    # Migrasyon: timezone kolonu yoksa ekle
+    try:
+        cursor.execute("SELECT timezone FROM users LIMIT 1")
+    except sqlite3.OperationalError:
+        print("Migrasyon: users tablosuna timezone kolonu ekleniyor...")
+        cursor.execute("ALTER TABLE users ADD COLUMN timezone TEXT DEFAULT 'Europe/Istanbul'")
+
+    # Alışkanlıklar tablosu
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS habits (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,6 +53,7 @@ def init_database():
         )
     """)
     
+    # Alışkanlık tamamlama kayıtları
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS habit_completions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,6 +65,7 @@ def init_database():
         )
     """)
     
+    # Hatırlatmalar tablosu
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS reminders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,6 +80,7 @@ def init_database():
         )
     """)
     
+    # Görevler tablosu
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,6 +95,7 @@ def init_database():
         )
     """)
     
+    # Notlar tablosu
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS notes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,6 +107,7 @@ def init_database():
         )
     """)
     
+    # Konuşma geçmişi tablosu (AI hafızası için)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS conversation_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,6 +119,7 @@ def init_database():
         )
     """)
     
+    # Kullanıcı aktif modül tablosu
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS user_current_module (
             user_id INTEGER PRIMARY KEY,
@@ -112,13 +128,34 @@ def init_database():
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
     """)
+    
+    conn.commit()
+    conn.close()
 
+
+# ==================== KULLANICI İŞLEMLERİ ====================
+
+def get_all_users() -> List[Dict[str, Any]]:
+    """Tüm kullanıcıları getir"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users")
+    users = cursor.fetchall()
+    conn.close()
+    return [dict(u) for u in users]
+
+
+def update_user_timezone(user_id: int, timezone: str):
+    """Kullanıcının zaman dilimini güncelle"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET timezone = ? WHERE id = ?", (timezone, user_id))
     conn.commit()
     conn.close()
 
 
 def get_or_create_user(telegram_id: int, username: str = None, first_name: str = None) -> Dict[str, Any]:
-    """Kullaniciyi getir veya olustur"""
+    """Kullanıcıyı getir veya oluştur"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -130,8 +167,8 @@ def get_or_create_user(telegram_id: int, username: str = None, first_name: str =
         return dict(user)
     
     cursor.execute(
-        "INSERT INTO users (telegram_id, username, first_name) VALUES (?, ?, ?)",
-        (telegram_id, username, first_name)
+        "INSERT INTO users (telegram_id, username, first_name, timezone) VALUES (?, ?, ?, ?)",
+        (telegram_id, username, first_name, 'Europe/Istanbul')
     )
     conn.commit()
     
@@ -143,7 +180,7 @@ def get_or_create_user(telegram_id: int, username: str = None, first_name: str =
 
 
 def get_user_by_telegram_id(telegram_id: int) -> Optional[Dict[str, Any]]:
-    """Telegram ID ile kullanici getir"""
+    """Telegram ID ile kullanıcı getir"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -154,23 +191,10 @@ def get_user_by_telegram_id(telegram_id: int) -> Optional[Dict[str, Any]]:
     return dict(user) if user else None
 
 
-def normalize_turkish(text: str) -> str:
-    """Turkce karakterleri normalize et ve kucuk harfe cevir"""
-    if not text:
-        return ""
-    text = text.lower()
-    replacements = {
-        'i': 'i', 'I': 'i', 'g': 'g', 'G': 'g',
-        'u': 'u', 'U': 'u', 's': 's', 'S': 's',
-        'o': 'o', 'O': 'o', 'c': 'c', 'C': 'c'
-    }
-    for old, new in replacements.items():
-        text = text.replace(old, new)
-    return text
-
+# ==================== ALIŞKANLIK İŞLEMLERİ ====================
 
 def add_habit(user_id: int, name: str, frequency: str, description: str = None, target: str = None) -> Dict[str, Any]:
-    """Yeni aliskanlik ekle"""
+    """Yeni alışkanlık ekle"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -189,7 +213,7 @@ def add_habit(user_id: int, name: str, frequency: str, description: str = None, 
 
 
 def get_user_habits(user_id: int, active_only: bool = True) -> List[Dict[str, Any]]:
-    """Kullanicinin aliskanliklarini getir"""
+    """Kullanıcının alışkanlıklarını getir"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -210,11 +234,28 @@ def get_user_habits(user_id: int, active_only: bool = True) -> List[Dict[str, An
     return [dict(h) for h in habits]
 
 
+def normalize_turkish(text: str) -> str:
+    """Türkçe karakterleri normalize et ve küçük harfe çevir"""
+    if not text:
+        return ""
+    text = text.lower()
+    # Türkçe karakter dönüşümleri
+    replacements = {
+        'ı': 'i', 'İ': 'i', 'ğ': 'g', 'Ğ': 'g',
+        'ü': 'u', 'Ü': 'u', 'ş': 's', 'Ş': 's',
+        'ö': 'o', 'Ö': 'o', 'ç': 'c', 'Ç': 'c'
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
+
+
 def get_habit_by_name(user_id: int, name: str) -> Optional[Dict[str, Any]]:
-    """Isme gore aliskanlik getir"""
+    """İsme göre alışkanlık getir (Türkçe karakter ve büyük/küçük harf toleranslı)"""
     conn = get_connection()
     cursor = conn.cursor()
     
+    # Tüm aktif alışkanlıkları getir
     cursor.execute(
         "SELECT * FROM habits WHERE user_id = ? AND is_active = 1",
         (user_id,)
@@ -225,23 +266,35 @@ def get_habit_by_name(user_id: int, name: str) -> Optional[Dict[str, Any]]:
     if not habits:
         return None
     
+    # Aranan ismi normalize et
     search_normalized = normalize_turkish(name)
     
+    # Önce tam eşleşme dene
     for habit in habits:
         habit_normalized = normalize_turkish(habit['name'])
         if habit_normalized == search_normalized:
             return dict(habit)
     
+    # Sonra kısmi eşleşme dene (içeriyor mu?)
     for habit in habits:
         habit_normalized = normalize_turkish(habit['name'])
         if search_normalized in habit_normalized or habit_normalized in search_normalized:
+            return dict(habit)
+    
+    # Son olarak kelime bazlı eşleşme dene
+    search_words = set(search_normalized.split())
+    for habit in habits:
+        habit_normalized = normalize_turkish(habit['name'])
+        habit_words = set(habit_normalized.split())
+        # Herhangi bir kelime eşleşiyor mu?
+        if search_words & habit_words:
             return dict(habit)
     
     return None
 
 
 def delete_habit(habit_id: int) -> bool:
-    """Aliskanligi sil (pasif yap)"""
+    """Alışkanlığı sil (pasif yap)"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -253,14 +306,17 @@ def delete_habit(habit_id: int) -> bool:
     return affected > 0
 
 
+# ==================== TAMAMLAMA İŞLEMLERİ ====================
+
 def complete_habit(habit_id: int, period_date: date = None, notes: str = None) -> Dict[str, Any]:
-    """Aliskanligi tamamlandi olarak isaretle"""
+    """Alışkanlığı tamamlandı olarak işaretle"""
     conn = get_connection()
     cursor = conn.cursor()
     
     if period_date is None:
         period_date = date.today()
     
+    # Önce bu dönem için zaten tamamlanmış mı kontrol et
     cursor.execute(
         "SELECT * FROM habit_completions WHERE habit_id = ? AND period_date = ?",
         (habit_id, period_date.isoformat())
@@ -285,7 +341,7 @@ def complete_habit(habit_id: int, period_date: date = None, notes: str = None) -
 
 
 def is_habit_completed_today(habit_id: int) -> bool:
-    """Aliskanlik bugun tamamlandi mi?"""
+    """Alışkanlık bugün tamamlandı mı?"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -301,7 +357,7 @@ def is_habit_completed_today(habit_id: int) -> bool:
 
 
 def get_uncompleted_habits_for_user(user_id: int) -> List[Dict[str, Any]]:
-    """Bugun tamamlanmamis aliskanliklari getir"""
+    """Bugün tamamlanmamış alışkanlıkları getir"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -324,7 +380,7 @@ def get_uncompleted_habits_for_user(user_id: int) -> List[Dict[str, Any]]:
 
 
 def get_all_users_with_uncompleted_habits() -> List[Dict[str, Any]]:
-    """Tamamlanmamis aliskanligi olan tum kullanicilari getir"""
+    """Tamamlanmamış alışkanlığı olan tüm kullanıcıları getir"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -347,7 +403,7 @@ def get_all_users_with_uncompleted_habits() -> List[Dict[str, Any]]:
 
 
 def get_habit_history(user_id: int, days: int = 7) -> List[Dict[str, Any]]:
-    """Kullanicinin aliskanlik gecmisini getir"""
+    """Kullanıcının alışkanlık geçmişini getir (belirtilen gün sayısı kadar)"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -373,7 +429,7 @@ def get_habit_history(user_id: int, days: int = 7) -> List[Dict[str, Any]]:
 
 
 def get_daily_summary(user_id: int, target_date: date = None) -> Dict[str, Any]:
-    """Belirli bir gun icin aliskanlik ozetini getir"""
+    """Belirli bir gün için alışkanlık özetini getir"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -382,6 +438,7 @@ def get_daily_summary(user_id: int, target_date: date = None) -> Dict[str, Any]:
     
     date_str = target_date.isoformat()
     
+    # Günlük alışkanlıkları getir
     cursor.execute("""
         SELECT h.*, 
                CASE WHEN hc.id IS NOT NULL THEN 1 ELSE 0 END as completed
@@ -405,8 +462,10 @@ def get_daily_summary(user_id: int, target_date: date = None) -> Dict[str, Any]:
     }
 
 
+# ==================== HATIRLATMA İŞLEMLERİ ====================
+
 def add_reminder(user_id: int, title: str, remind_at: str, remind_date: date = None, is_recurring: bool = False) -> Dict[str, Any]:
-    """Yeni hatirlatma ekle"""
+    """Yeni hatırlatma ekle"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -427,12 +486,13 @@ def add_reminder(user_id: int, title: str, remind_at: str, remind_date: date = N
 
 
 def get_user_reminders(user_id: int) -> List[Dict[str, Any]]:
-    """Kullanicinin aktif hatirlatmalarini getir"""
+    """Kullanıcının aktif hatırlatmalarını getir"""
     conn = get_connection()
     cursor = conn.cursor()
     
     today = date.today().isoformat()
     
+    # Tekrarlayan veya bugün/gelecek için olan hatırlatmaları getir
     cursor.execute("""
         SELECT * FROM reminders 
         WHERE user_id = ? 
@@ -447,20 +507,27 @@ def get_user_reminders(user_id: int) -> List[Dict[str, Any]]:
 
 
 def get_pending_reminders(current_time: str) -> List[Dict[str, Any]]:
-    """Gonderilmesi gereken hatirlatmalari getir"""
+    """Gönderilmesi gereken hatırlatmaları getir (Deprecated - use get_pending_reminders_by_user)"""
+    # Bu fonksiyon geriye dönük uyumluluk için, ancak yeni sistemde 
+    # kullanıcı bazlı kontrol yapılacağı için bunu artık pek kullanmayacağız.
+    # Yine de "default" timezone varsayımıyla çalışabilir.
+    return []
+
+
+def get_pending_reminders_for_user(user_id: int, user_time_str: str, user_date_str: str) -> List[Dict[str, Any]]:
+    """Belirli bir kullanıcı için gönderilmesi gereken hatırlatmaları getir"""
     conn = get_connection()
     cursor = conn.cursor()
     
-    today = date.today().isoformat()
-    
+    # Şu an gönderilmesi gereken hatırlatmalar
     cursor.execute("""
-        SELECT r.*, u.telegram_id 
+        SELECT r.*
         FROM reminders r
-        INNER JOIN users u ON u.id = r.user_id
-        WHERE r.remind_at = ?
+        WHERE r.user_id = ?
+          AND r.remind_at = ?
           AND (r.is_recurring = 1 OR r.remind_date IS NULL OR r.remind_date = ?)
           AND r.is_sent = 0
-    """, (current_time, today))
+    """, (user_id, user_time_str, user_date_str))
     
     reminders = cursor.fetchall()
     conn.close()
@@ -469,13 +536,15 @@ def get_pending_reminders(current_time: str) -> List[Dict[str, Any]]:
 
 
 def mark_reminder_sent(reminder_id: int, is_recurring: bool = False):
-    """Hatirlatmayi gonderildi olarak isaretle veya sil"""
+    """Hatırlatmayı gönderildi olarak işaretle veya sil"""
     conn = get_connection()
     cursor = conn.cursor()
     
     if is_recurring:
+        # Tekrarlayan hatırlatma - is_sent'i sıfırla (yarın tekrar gönderilecek)
         cursor.execute("UPDATE reminders SET is_sent = 0 WHERE id = ?", (reminder_id,))
     else:
+        # Tek seferlik hatırlatma - sil
         cursor.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
     
     conn.commit()
@@ -483,7 +552,7 @@ def mark_reminder_sent(reminder_id: int, is_recurring: bool = False):
 
 
 def reset_daily_reminders():
-    """Gunluk tekrarlayan hatirlatmalari sifirla"""
+    """Günlük tekrarlayan hatırlatmaları sıfırla (gece yarısı çağrılır)"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -494,7 +563,7 @@ def reset_daily_reminders():
 
 
 def delete_reminder(reminder_id: int) -> bool:
-    """Hatirlatmayi sil"""
+    """Hatırlatmayı sil"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -507,7 +576,7 @@ def delete_reminder(reminder_id: int) -> bool:
 
 
 def get_reminder_by_title(user_id: int, title: str) -> Optional[Dict[str, Any]]:
-    """Basliga gore hatirlatma getir"""
+    """Başlığa göre hatırlatma getir"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -528,8 +597,10 @@ def get_reminder_by_title(user_id: int, title: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+# ==================== GÖREV İŞLEMLERİ ====================
+
 def add_task(user_id: int, title: str, description: str = None, due_date: date = None) -> Dict[str, Any]:
-    """Yeni gorev ekle"""
+    """Yeni görev ekle"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -550,7 +621,7 @@ def add_task(user_id: int, title: str, description: str = None, due_date: date =
 
 
 def get_user_tasks(user_id: int, include_completed: bool = False) -> List[Dict[str, Any]]:
-    """Kullanicinin gorevlerini getir"""
+    """Kullanıcının görevlerini getir"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -572,7 +643,7 @@ def get_user_tasks(user_id: int, include_completed: bool = False) -> List[Dict[s
 
 
 def complete_task(task_id: int) -> bool:
-    """Gorevi tamamla"""
+    """Görevi tamamla"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -588,7 +659,7 @@ def complete_task(task_id: int) -> bool:
 
 
 def delete_task(task_id: int) -> bool:
-    """Gorevi sil"""
+    """Görevi sil"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -601,7 +672,7 @@ def delete_task(task_id: int) -> bool:
 
 
 def get_task_by_title(user_id: int, title: str) -> Optional[Dict[str, Any]]:
-    """Basliga gore gorev getir"""
+    """Başlığa göre görev getir"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -621,6 +692,8 @@ def get_task_by_title(user_id: int, title: str) -> Optional[Dict[str, Any]]:
     
     return None
 
+
+# ==================== NOT İŞLEMLERİ ====================
 
 def add_note(user_id: int, content: str, title: str = None) -> Dict[str, Any]:
     """Yeni not ekle"""
@@ -642,7 +715,7 @@ def add_note(user_id: int, content: str, title: str = None) -> Dict[str, Any]:
 
 
 def get_user_notes(user_id: int) -> List[Dict[str, Any]]:
-    """Kullanicinin notlarini getir"""
+    """Kullanıcının notlarını getir"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -671,7 +744,7 @@ def delete_note(note_id: int) -> bool:
 
 
 def get_note_by_content(user_id: int, search_text: str) -> Optional[Dict[str, Any]]:
-    """Icerige gore not getir"""
+    """İçeriğe göre not getir"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -693,8 +766,10 @@ def get_note_by_content(user_id: int, search_text: str) -> Optional[Dict[str, An
     return None
 
 
+# ==================== KONUŞMA GEÇMİŞİ İŞLEMLERİ ====================
+
 def add_conversation_message(user_id: int, role: str, message: str):
-    """Konusma gecmisine mesaj ekle"""
+    """Konuşma geçmişine mesaj ekle (role: 'user' veya 'assistant')"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -708,7 +783,7 @@ def add_conversation_message(user_id: int, role: str, message: str):
 
 
 def get_conversation_history(user_id: int, limit: int = 10) -> List[Dict[str, Any]]:
-    """Kullanicinin son konusma gecmisini getir"""
+    """Kullanıcının son konuşma geçmişini getir"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -722,11 +797,12 @@ def get_conversation_history(user_id: int, limit: int = 10) -> List[Dict[str, An
     messages = cursor.fetchall()
     conn.close()
     
+    # Ters çevir (eski mesajlar önce)
     return [dict(m) for m in reversed(messages)]
 
 
 def clear_old_conversation_history(user_id: int, keep_last: int = 20):
-    """Eski konusma gecmisini temizle"""
+    """Eski konuşma geçmişini temizle (son N mesajı tut)"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -744,8 +820,11 @@ def clear_old_conversation_history(user_id: int, keep_last: int = 20):
     conn.close()
 
 
+
+# ==================== MODÜL YÖNETİMİ ====================
+
 def get_user_current_module(user_id: int) -> str:
-    """Kullanicinin aktif modulunu getir"""
+    """Kullanıcının aktif modülünü getir"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -756,12 +835,13 @@ def get_user_current_module(user_id: int) -> str:
     if result:
         return result['module_name']
     
+    # Varsayılan modül asistan
     set_user_current_module(user_id, 'asistan')
     return 'asistan'
 
 
 def set_user_current_module(user_id: int, module_name: str):
-    """Kullanicinin aktif modulunu ayarla"""
+    """Kullanıcının aktif modülünü ayarla"""
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -775,4 +855,5 @@ def set_user_current_module(user_id: int, module_name: str):
     conn.close()
 
 
+# Veritabanını başlat
 init_database()
