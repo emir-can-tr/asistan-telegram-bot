@@ -159,7 +159,7 @@ async def homework_deadline_reminder():
                 upcoming_hw = []
 
                 for hw in homeworks:
-                    hw_date_obj = time_utils.str_to_time(hw['bitis_tarihi'][:5]) # Bu kısımda bug yanlış olabilir, tarih formatı YYYY-MM-DD
+
                     # sqlite'dan gelen tarih string formatında (YYYY-MM-DD)
                     try:
                         y, m, d = map(int, hw['bitis_tarihi'].split('-'))
@@ -255,11 +255,11 @@ async def lesson_start_reminder():
                     await bot_application.bot.send_message(
                         chat_id=user_tg_id,
                         text=f"📚 *DERS HATIRLATMA*\n\n"
-                        f"⏰ 15 dakika sonra dersin başlıyor!\n\n"
-                        f"📖 **{lesson['ders_adi']}**\n"
-                        f"🕐 Saat: {lesson['baslangic_saati']} - {lesson['bitis_saati']}\n"
-                        f"👨‍🏫 Öğretmen: {lesson['ogretmen'] or '-'}\n\n"
-                        f"Hazırlan! 💪",
+                             f"⏰ 15 dakika sonra dersin başlıyor!\n\n"
+                             f"📖 **{lesson['ders_adi']}**\n"
+                             f"🕐 Saat: {lesson['baslangic_saati']} - {lesson['bitis_saati']}\n"
+                             f"👨‍🏫 Öğretmen: {lesson['ogretmen'] or '-'}\n\n"
+                             f"Hazırlan! 💪",
                         parse_mode='Markdown'
                     )
                     logger.info(f"Ders hatırlatma gönderildi: {user_tg_id} - {lesson['ders_adi']}")
@@ -326,11 +326,11 @@ async def vocabulary_review_reminder():
                     await bot_application.bot.send_message(
                         chat_id=user_tg_id,
                         text=f"🇬🇧 *İNGİLİZCE: Tekrar Zamanı!*\n\n"
-                        f"📚 Bugün **{review_count} kelime** tekrar bekliyor!\n"
-                        f"{goal_text}\n\n"
-                        f"Tekrar için `/ingilizce` modülüne geç ve:\n"
-                        f"• 'Tekrar edilecek kelimeleri göster'\n\n"
-                        f"🧠 Spaced Repetition ile öğrenme kalıcı olur!",
+                             f"📚 Bugün **{review_count} kelime** tekrar bekliyor!\n"
+                             f"{goal_text}\n\n"
+                             f"Tekrar için `/ingilizce` modülüne geç ve:\n"
+                             f"• 'Tekrar edilecek kelimeleri göster'\n\n"
+                             f"🧠 Spaced Repetition ile öğrenme kalıcı olur!",
                         parse_mode='Markdown'
                     )
                     logger.info(f"Kelime tekrar hatırlatma gönderildi: {user_tg_id}")
@@ -392,11 +392,11 @@ async def daily_word_goal_reminder():
                         await bot_application.bot.send_message(
                             chat_id=user_tg_id,
                             text=f"🇬🇧 *İNGİLİZCE: Günlük Hedef Hatırlatması*\n\n"
-                            f"🎯 Günlük Hedef: {goal} kelime\n"
-                            f"✅ Öğrenilen: {learned} kelime\n"
-                            f"⏳ Kalan: **{remaining} kelime**\n\n"
-                            f"Gün bitmeden hedefini tamamla! 💪\n"
-                            f"`/ingilizce` modülüne geç!",
+                                 f"🎯 Günlük Hedef: {goal} kelime\n"
+                                 f"✅ Öğrenilen: {learned} kelime\n"
+                                 f"⏳ Kalan: **{remaining} kelime**\n\n"
+                                 f"Gün bitmeden hedefini tamamla! 💪\n"
+                                 f"`/ingilizce` modülüne geç!",
                             parse_mode='Markdown'
                         )
                         logger.info(f"Günlük hedef hatırlatma gönderildi: {user_tg_id}")
@@ -451,10 +451,10 @@ async def daily_journal_reminder():
                     await bot_application.bot.send_message(
                         chat_id=user_tg_id,
                         text=f"📔 *NOT DEFTERİ HATIRLATMA: Günlük Zamanı!*\n\n"
-                        f"🌙 Bugün henüz günlük yazmadın.\n\n"
-                        f"Günlüğünü yazmak için `/notdefteri` modülüne geç:\n"
-                        f"• 'Günlük kategorisinde not: Bugün...'\n\n"
-                        f"💭 Bugünü değerlendir, düşüncelerini paylaş!",
+                             f"🌙 Bugün henüz günlük yazmadın.\n\n"
+                             f"Günlüğünü yazmak için `/notdefteri` modülüne geç:\n"
+                             f"• 'Günlük kategorisinde not: Bugün...'\n\n"
+                             f"💭 Bugünü değerlendir, düşüncelerini paylaş!",
                         parse_mode='Markdown'
                     )
                     logger.info(f"Günlük hatırlatma gönderildi: {user_tg_id}")
@@ -502,9 +502,6 @@ def start_scheduler():
 
     scheduler.add_job(
         lesson_start_reminder,
-        CronTrigger(minute='*'), # Her dakika (fonksiyon içinde 15dk kontrolü yapılmalı veya buraya 0,15,30,45 yazılmalı)
-        # Fonksiyon içinde 7-22 saat kontrolü var.
-        # Dakika kontrolü için en iyisi buraya filtre koymak:
         args=[],
         trigger=CronTrigger(minute='0,15,30,45'),
         id='lesson_start',

@@ -23,7 +23,7 @@ from modules.asistan_bot import AsistanBot
 from modules.ders_bot import DersBot
 from modules.ingilizce_bot import IngilizceBot
 from modules.kitap_bot import KitapBot
-from modules.notdefteri_bot import NotDefteriBott
+from modules.notdefteri_bot import NotDefteriBot
 from modules.proje_bot import ProjeBot
 
 # Modül instance'ları oluştur
@@ -32,7 +32,7 @@ modules = {
     'ders': DersBot(),
     'ingilizce': IngilizceBot(),
     'kitap': KitapBot(),
-    'notdefteri': NotDefteriBott(),
+    'notdefteri': NotDefteriBot(),
     'proje': ProjeBot()
 }
 
@@ -255,6 +255,31 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+
+async def test_reminders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Manuel hatırlatma tetikleyici (Debug)"""
+    await update.message.reply_text("🔄 Hatırlatmalar manuel olarak tetikleniyor...", parse_mode='Markdown')
+    
+    # Trigger functions
+    try:
+        # Global ve kullanıcı bazlı kontrolleri tetikle
+        await scheduler.send_reminders()
+        await scheduler.check_user_reminders()
+        await update.message.reply_text("✅ Tetikleme tamamlandı. Koşullar sağlanıyorsa mesaj gelmesi lazım.", parse_mode='Markdown')
+    except Exception as e:
+        await update.message.reply_text(f"❌ Hata: {str(e)}", parse_mode='Markdown')
+
+
+async def post_init(application: Application):
+    """Bot başlatıldıktan sonra çalışacak"""
+    # Zamanlayıcıya bot'u set et
+    scheduler.set_bot_application(application)
+    
+    # Zamanlayıcıyı başlat
+    scheduler.start_scheduler()
+    print("⏰ Zamanlayıcı post_init içinde başlatıldı")
+
+
 # ==================== ANA FONKSİYON ====================
 
 def main():
@@ -265,11 +290,8 @@ def main():
     database.init_database()
     print("📦 Veritabanı hazır")
     
-    # Bot uygulamasını oluştur
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    
-    # Zamanlayıcıya bot'u set et
-    scheduler.set_bot_application(application)
+    # Bot uygulamamasını oluştur (post_init ile)
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).build()
     
     # Genel komut işleyicileri
     application.add_handler(CommandHandler("start", start_command))
@@ -277,6 +299,9 @@ def main():
     application.add_handler(CommandHandler("yardim", help_command))
     application.add_handler(CommandHandler("modul", modul_command))
     application.add_handler(CommandHandler("timezone", timezone_command))
+    
+    # Debug komutu
+    application.add_handler(CommandHandler("test_reminders", test_reminders_command))
     
     # Modül komut işleyicileri
     application.add_handler(CommandHandler("asistan", switch_to_asistan))
@@ -296,8 +321,7 @@ def main():
     # Hata işleyici ekle
     application.add_error_handler(error_handler)
     
-    # Zamanlayıcıyı başlat
-    scheduler.start_scheduler()
+    # Zamanlayıcı burada başlatılmaz, post_init içinde başlatılır
     
     # Botu başlat
     print("✅ Modüler Bot çalışıyor! Ctrl+C ile durdurun.")
