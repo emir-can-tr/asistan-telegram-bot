@@ -100,227 +100,139 @@ Benimle doğal dilde konuşabilirsin! 💪
         elif action == "show_stats":
             response = await self._handle_show_stats(result, user_id)
         
-        # Yanıtı gönder
-        try:
-            await update.message.reply_text(response, parse_mode='Markdown')
-        except Exception:
-            await update.message.reply_text(response.replace('*', '').replace('_', ''))
-    
-    # ==================== YARDIMCI METODLAR ====================
-    
+        await update.message.reply_text(response, parse_mode='Markdown')
+
     async def _handle_query_schedule(self, result: dict, user_id: int) -> str:
-        """Program sorgulama"""
-        gun = result.get('gun', 'bugün')
-        saat_no = result.get('saat_no')
+        """Ders programı sorgulama"""
+        day = result.get('day', date.today().strftime('%Y-%m-%d'))
         
-        # Gün adını normalize et
-        gun_map = {
-            'bugün': datetime.now().strftime('%A').lower(),
-            'yarın': (datetime.now().weekday() + 1) % 7,
-            'pazartesi': 'pazartesi',
-            'salı': 'sali',
-            'sali': 'sali',
-            'çarşamba': 'çarşamba',
-            'carşamba': 'çarşamba',
-            'perşembe': 'perşembe',
-            'persembe': 'perşembe',
-            'cuma': 'cuma',
+        # Gün ismini bul (Türkçe)
+        tr_gunler = {
+            'Monday': 'pazartesi', 'Tuesday': 'sali', 'Wednesday': 'çarşamba',
+            'Thursday': 'perşembe', 'Friday': 'cuma', 'Saturday': 'cumartesi', 'Sunday': 'pazar'
         }
         
-        # İngilizce gün adlarını Türkçe'ye çevir
-        weekday_names = ['pazartesi', 'sali', 'çarşamba', 'perşembe', 'cuma', 'cumartesi', 'pazar']
-        if gun == 'bugün':
-            gun = weekday_names[datetime.now().weekday()]
-        elif gun == 'yarın':
-            gun = weekday_names[(datetime.now().weekday() + 1) % 7]
+        if isinstance(day, str):
+            try:
+                dt = datetime.strptime(day, '%Y-%m-%d')
+                gun_ismi = tr_gunler[dt.strftime('%A')]
+            except:
+                gun_ismi = date.today().strftime('%A')
+                gun_ismi = tr_gunler.get(gun_ismi, 'pazartesi')
         else:
-            gun = gun_map.get(gun, gun)
-        
-        # Saat numarasına göre sorgulama
-        if saat_no:
-            entry = db.get_schedule_by_hour(user_id, gun, saat_no)
-            if entry:
-                response = f"📚 *{gun.title()} {saat_no}. Saat:*\n\n"
-                response += f"{entry['ders_kodu']} - {entry['ders_adi']}\n"
-                response += f"⏰ {entry['baslangic_saati']}-{entry['bitis_saati']}\n"
-                if entry.get('ogretmen'):
-                    response += f"👨‍🏫 {entry['ogretmen']}"
-            else:
-                response = f"📅 {gun.title()} günü {saat_no}. saatte ders yok."
-        else:
-            # Günün tüm programı
-            schedule = db.get_schedule_for_day(user_id, gun)
-            response = ai.format_schedule(schedule)
-        
-        return response
-    
+            gun_ismi = "pazartesi"
+            
+        schedule = db.get_schedule(user_id, gun_ismi)
+        return ai.format_schedule(schedule, gun_ismi)
+
     async def _handle_add_study(self, result: dict, user_id: int, user_lessons: list) -> str:
         """Çalışma kaydı ekleme"""
-        lesson_search = result.get('lesson_search', '')
-        konu = result.get('konu')
-        sure_dakika = result.get('sure_dakika')
+        ders_adi = result.get('subject')
+        sure = result.get('duration', 0)
+        konu = result.get('topic')
+        detay = result.get('details')
         
-        if not lesson_search:
-            return "❌ Hangi dersi çalıştığını belirtmelisin. Örnek: 'Matematik çalıştım'"
+        # Ders ID bul
+        lesson_id = self._find_lesson_id(ders_adi, user_lessons)
         
-        # Dersi bul
-        lesson = db.get_lesson_by_code_or_name(user_id, lesson_search)
-        if not lesson:
-            return f"❌ '{lesson_search}' dersi bulunamadı. `/derslerim` komutu ile derslerini görebilirsin."
+        if not lesson_id:
+            return f"❌ '{ders_adi}' dersini bulamadım. Lütfen ders ismini doğru yazdığından emin ol."
         
-        # Kaydı ekle
-        db.add_study_record(
-            user_id=user_id,
-            lesson_id=lesson['id'],
-            konu=konu,
-            sure_dakika=sure_dakika
-        )
+        db.add_study_record(user_id, lesson_id, sure, konu, detay)
         
-        response = f"✅ *{lesson['ders_adi']}* çalışman kaydedildi!\n\n"
-        if konu:
-            response += f"📖 Konu: {konu}\n"
-        if sure_dakika:
-            saat = sure_dakika // 60
-            dakika = sure_dakika % 60
-            if saat > 0:
-                response += f"⏱️ Süre: {saat} saat"
-                if dakika > 0:
-                    response += f" {dakika} dakika"
-            elif dakika > 0:
-                response += f"⏱️ Süre: {dakika} dakika"
-        
-        response += "\n\nBöyle devam! 💪"
-        return response
-    
+        return f"✅ *Çalışma Kaydedildi!*\n\n📚 Ders: {ders_adi}\n⏱️ Süre: {sure} dk\n📝 Konu: {konu}"
+
     async def _handle_add_questions(self, result: dict, user_id: int, user_lessons: list) -> str:
-        """Soru çözümü kaydı ekleme"""
-        lesson_search = result.get('lesson_search', '')
-        konu = result.get('konu')
-        soru_sayisi = result.get('soru_sayisi')
+        """Soru çözümü ekleme"""
+        ders_adi = result.get('subject')
+        miktar = result.get('amount', 0)
+        dogru = result.get('correct')
+        yanlis = result.get('incorrect')
+        konu = result.get('topic')
         
-        if not lesson_search:
-            return "❌ Hangi dersten soru çözdüğünü belirtmelisin. Örnek: 'Matematik'ten 15 soru çözdüm'"
+        lesson_id = self._find_lesson_id(ders_adi, user_lessons)
         
-        if not soru_sayisi:
-            return "❌ Kaç soru çöz düğünü belirtmelisin. Örnek: '15 soru'"
+        if not lesson_id:
+            return f"❌ '{ders_adi}' dersini bulamadım."
+            
+        db.add_question_record(user_id, lesson_id, miktar, dogru, yanlis, konu)
         
-        # Dersi bul
-        lesson = db.get_lesson_by_code_or_name(user_id, lesson_search)
-        if not lesson:
-            return f"❌ '{lesson_search}' dersi bulunamadı."
-        
-        # Kaydı ekle
-        db.add_question_record(
-            user_id=user_id,
-            lesson_id=lesson['id'],
-            soru_sayisi=soru_sayisi,
-            konu=konu
-        )
-        
-        response = f"✅ *{soru_sayisi} {lesson['ders_adi']} sorusu* kaydedildi!\n\n"
-        if konu:
-            response += f"📖 Konu: {konu}\n"
-        
-        response += "\nHarika gidiyorsun! 🎯"
-        return response
-    
+        msg = f"✅ *Soru Çözümü Kaydedildi!*\n\n📚 Ders: {ders_adi}\n✏️ Soru: {miktar}"
+        if dogru is not None:
+            msg += f"\n✅ Doğru: {dogru}"
+        if yanlis is not None:
+            msg += f"\n❌ Yanlış: {yanlis}"
+            
+        return msg
+
     async def _handle_add_homework(self, result: dict, user_id: int, user_lessons: list) -> str:
         """Ödev ekleme"""
-        lesson_search = result.get('lesson_search')
-        homework_title = result.get('homework_title', '')
-        homework_description = result.get('homework_description')
-        homework_due_date = result.get('homework_due_date')
+        ders_adi = result.get('subject')
+        aciklama = result.get('description')
+        teslim_tarihi = result.get('due_date')
         
-        if not homework_title:
-            return "❌ Ödev başlığı belirtmelisin. Örnek: 'Matematik ödevi var cuma teslim'"
+        lesson_id = self._find_lesson_id(ders_adi, user_lessons)
         
-        if not homework_due_date:
-            return "❌ Son tarihi belirtmelisin. Örnek: 'cuma', 'yarın', '2026-01-05'"
+        if not lesson_id:
+            return f"❌ '{ders_adi}' dersini bulamadım."
+            
+        db.add_homework(user_id, lesson_id, aciklama, teslim_tarihi)
         
-        # Dersi bul (opsiyonel)
-        lesson_id = None
-        if lesson_search:
-            lesson = db.get_lesson_by_code_or_name(user_id, lesson_search)
-            if lesson:
-                lesson_id = lesson['id']
-        
-        # Tarihi parse et
-        try:
-            due_date = datetime.strptime(homework_due_date, '%Y-%m-%d').date()
-        except:
-            # Basit tarih parse
-            if homework_due_date.lower() in ['bugün', 'bugun']:
-                due_date = date.today()
-            elif homework_due_date.lower() in ['yarın', 'yarin']:
-                from datetime import timedelta
-                due_date = date.today() + timedelta(days=1)
-            else:
-                return f"❌ Tarih formatı anlaşılamadı: {homework_due_date}"
-        
-        # Ödevi ekle
-        db.add_homework(
-            user_id=user_id,
-            lesson_id=lesson_id,
-            baslik=homework_title,
-            aciklama=homework_description,
-            bitis_tarihi=due_date
-        )
-        
-        response = f"✅ *Ödev eklendi!*\n\n📝 {homework_title}\n"
-        if homework_description:
-            response += f"📄 {homework_description}\n"
-        response += f"📅 Son tarih: {due_date.strftime('%d.%m.%Y')}"
-        
-        return response
-    
+        return f"✅ *Ödev Eklendi!*\n\n📚 Ders: {ders_adi}\n📝 {aciklama}\n📅 Teslim: {teslim_tarihi}"
+
     async def _handle_complete_homework(self, result: dict, user_id: int) -> str:
         """Ödev tamamlama"""
-        homework_search = result.get('homework_search', '')
-        
-        if not homework_search:
-            return "❌ Hangi ödevi tamamladığını belirtmelisin."
-        
-        # Ödevi bul
-        homework = db.get_homework_by_title(user_id, homework_search)
-        if not homework:
-            return f"❌ '{homework_search}' ile eşleşen bir ödev bulunamadı."
-        
-        # Tamamla
-        db.complete_homework(homework['id'])
-        
-        return f"🎉 *'{homework['baslik']}'* ödevi tamamlandı!\n\nTebrikler! 🎊"
-    
+        homework_id = result.get('homework_id') # AI bunu tahmin edemeyebilir, bu yüzden basitleştirilmiş bir akış gerekebilir
+        # Şimdilik sadece son ödevi tamamla veya listele
+        pending = db.get_pending_homeworks(user_id)
+        if not pending:
+            return "Tamamlanacak ödevin yok! 🎉"
+            
+        # Eğer AI spesifik bir ödev ID bulamadıysa, kullanıcıya listeyi gösterelim
+        return "Hangi ödevi tamamladın? `/odevlerim` yazarak ID'sini görebilirsin."
+
     async def _handle_show_stats(self, result: dict, user_id: int) -> str:
-        """İstatistikleri göster"""
-        # Çalışma kayıtları
-        study_records = db.get_study_records(user_id, days=7)
-        study_text = ai.format_study_records(study_records)
+        """İstatistik gösterme"""
+        period = result.get('period', 'today')
         
-        # Soru istatistikleri
-        question_stats = db.get_question_stats(user_id, days=7)
-        stats_text = ai.format_question_stats(question_stats)
+        if period == 'today':
+            studies = db.get_today_study_records(user_id)
+            questions = db.get_today_question_stats(user_id)
+            title = "Bugünkü"
+        else:
+            studies = db.get_study_records(user_id, days=7)
+            questions = db.get_question_stats(user_id, days=7)
+            title = "Bu Haftaki"
+            
+        # Basit hesaplama
+        total_time = sum(s['sure_dakika'] for s in studies)
+        total_questions = questions['toplam']
         
-        return f"{study_text}\n\n{stats_text}"
-    
-    def register_handlers(self, application: Application):
-        """Ders modülü özel handler'ları"""
-        from telegram.ext import CommandHandler, MessageHandler, filters
+        return f"📊 *{title} İstatistiklerin*\n\n⏱️ Çalışma: {total_time} dakika\n✏️ Soru: {total_questions} adet"
+
+    def _find_lesson_id(self, match_name: str, lessons: list):
+        """Ders isminden ID bul (Fuzzy matching basitleştirilmiş)"""
+        if not match_name:
+            return None
+            
+        match_name = match_name.lower().strip()
         
-        application.add_handler(CommandHandler("program_yukle", self.load_schedule_command))
-        application.add_handler(CommandHandler("program_sifirla", self.reset_schedule_command))
-        application.add_handler(CommandHandler("derslerim", self.list_lessons_command))
-        application.add_handler(CommandHandler("odevlerim", self.list_homeworks_command))
-        application.add_handler(CommandHandler("istatistik", self.show_stats_command))
-        application.add_handler(CommandHandler("bugun", self.today_summary_command))
-        application.add_handler(CommandHandler("gunluk", self.today_summary_command))
-        application.add_handler(CommandHandler("haftalik", self.weekly_summary_command))
-        application.add_handler(CommandHandler("bu_hafta", self.weekly_summary_command))
-        
-        # CSV dosya handler
-        application.add_handler(MessageHandler(
-            filters.Document.MimeType("text/csv") | filters.Document.FileExtension("csv"),
-            self.handle_csv_document
-        ))
+        for lesson in lessons:
+            ders_adi = lesson['ders_adi'].lower()
+            ders_kodu = lesson['ders_kodu'].lower()
+            
+            if match_name in ders_adi or match_name in ders_kodu:
+                return lesson['id']
+                
+            # Kısa kod eşleştirme (MAT -> Matematik)
+            if match_name in ['mat', 'matematik'] and ('mat' in ders_kodu or 'mat' in ders_adi):
+                return lesson['id']
+            if match_name in ['fiz', 'fizik'] and ('fiz' in ders_kodu or 'fiz' in ders_adi):
+                return lesson['id']
+                
+        return None
+
+    # --- Command Handlers ---
     
     async def load_schedule_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Ders programını yükle - varsayılan program veya CSV bilgisi"""
@@ -330,49 +242,37 @@ Benimle doğal dilde konuşabilirsin! 💪
         lessons = db.get_user_lessons(user_id)
         if lessons:
             await update.message.reply_text(
-                "⚠️ Ders programın zaten yüklü!\n\n"
-                "Mevcut derslerini görmek için `/derslerim` kullan.\n"
-                "Programı sıfırlamak için `/program_sifirla` kullan.",
+                "⚠️ Ders programın zaten yüklü!\n\nMevcut derslerini görmek için `/derslerim` kullan.\nProgramı sıfırlamak için `/program_sifirla` kullan.",
                 parse_mode='Markdown'
             )
             return
         
         # CSV yükleme bilgisi ver
         await update.message.reply_text(
-            "📚 *Ders Programı Yükleme*\n\n"
-            "Kendi ders programını yüklemek için bana bir CSV dosyası gönder.\n\n"
-            "*CSV Formatı:*\n"
-            "```\ngun,saat_no,baslangic,bitis,ders_kodu,ders_adi,ogretmen\n"
-            "pazartesi,1,08:30,09:10,MAT,Matematik,Ali Hoca\n"
-            "pazartesi,2,09:25,10:05,FIZ,Fizik,Veli Hoca\n```\n\n"
-            "*Gün isimleri:* pazartesi, sali, carsamba, persembe, cuma\n\n"
+            "📚 *Ders Programı Yükleme*\\n\\n"
+            "Kendi ders programını yüklemek için bana bir CSV dosyası gönder.\\n\\n"
+            "*CSV Formatı:*\\n"
+            "```\\ngun,saat_no,baslangic,bitis,ders_kodu,ders_adi,ogretmen\\n"
+            "pazartesi,1,08:30,09:10,MAT,Matematik,Ali Hoca\\n"
+            "pazartesi,2,09:25,10:05,FIZ,Fizik,Veli Hoca\\n```\\n\\n"
+            "*Gün isimleri:* pazartesi, sali, carsamba, persembe, cuma\\n\\n"
             "💡 Not: Öğretmen sütunu opsiyoneldir.",
             parse_mode='Markdown'
         )
-    
+
     async def reset_schedule_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Ders programını sıfırla"""
         user_id = update.effective_user.id
         
-        lessons = db.get_user_lessons(user_id)
-        if not lessons:
-            await update.message.reply_text(
-                "❌ Zaten ders programın yok.\n\n"
-                "Yeni program yüklemek için `/program_yukle` kullan.",
-                parse_mode='Markdown'
-            )
-            return
+        # Onay iste (Basit versiyon: direkt siler, gerçek uygulamada butonlu onay eklenebilir)
+        # Şimdilik direkt silelim ama uyarı verelim
+        success = loader.clear_user_schedule(user_id)
         
-        # Programı sil
-        loader.clear_user_schedule(user_id)
-        
-        await update.message.reply_text(
-            "✅ *Ders programın sıfırlandı!*\n\n"
-            "Tüm dersler ve program verileri silindi.\n\n"
-            "Yeni program yüklemek için `/program_yukle` kullan veya CSV dosyası gönder.",
-            parse_mode='Markdown'
-        )
-    
+        if success:
+            await update.message.reply_text("🗑️ Ders programın ve tüm ders verilerin silindi. Yeni program yüklemek için `/program_yukle` kullanabilirsin.")
+        else:
+            await update.message.reply_text("❌ Bir hata oluştu.")
+
     async def handle_csv_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """CSV dosyasından ders programı yükle"""
         user_id = update.effective_user.id
@@ -395,143 +295,106 @@ Benimle doğal dilde konuşabilirsin! 💪
             
             if result['success']:
                 await update.message.reply_text(
-                    f"✅ *Ders Programı Yüklendi!*\n\n"
-                    f"📚 {result['ders_sayisi']} ders eklendi\n"
-                    f"📅 {result['program_sayisi']} program girişi eklendi\n\n"
+                    f"✅ *Ders Programı Yüklendi!*\\n\\n"
+                    f"📚 {result['ders_sayisi']} ders eklendi\\n"
+                    f"📅 {result['program_sayisi']} program girişi eklendi\\n\\n"
                     f"Artık 'Bugün hangi derslerim var?' diye sorabilirsin!",
                     parse_mode='Markdown'
                 )
             else:
                 await update.message.reply_text(
-                    f"❌ *Hata:* {result['message']}\n\n"
+                    f"❌ *Hata:* {result['message']}\\n\\n"
                     "CSV formatının doğru olduğundan emin ol.",
                     parse_mode='Markdown'
                 )
                 
         except Exception as e:
             await update.message.reply_text(f"❌ Dosya işleme hatası: {str(e)}")
-   
+
     async def list_lessons_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Dersleri listele"""
         user_id = update.effective_user.id
         lessons = db.get_user_lessons(user_id)
         
         if not lessons:
-            await update.message.reply_text(
-                "❌ Henüz ders eklenmemiş!\n\n`/program_yukle` ile programını yükle.",
-                parse_mode='Markdown'
-            )
+            await update.message.reply_text("Henüz kayıtlı dersin yok.")
             return
-        
-        response = f"📚 *Derslerim ({len(lessons)} ders):*\n\n"
+            
+        response = "*📚 Derslerin:*\n\n"
         for lesson in lessons:
-            response += f"• *{lesson['ders_kodu']}* - {lesson['ders_adi']}\n"
-            if lesson.get('ogretmen'):
-                response += f"  👨‍🏫 {lesson['ogretmen']}\n"
-            if lesson.get('haftalik_saat'):
-                response += f"  ⏰ {lesson['haftalik_saat']} saat/hafta\n"
+            response += f"• *{lesson['ders_kodu']}* - {lesson['ders_adi']}"
+            if lesson['ogretmen']:
+                response += f" ({lesson['ogretmen']})"
             response += "\n"
-        
+            
         await update.message.reply_text(response, parse_mode='Markdown')
-    
+
     async def list_homeworks_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Ödevleri listele"""
         user_id = update.effective_user.id
         homeworks = db.get_pending_homeworks(user_id)
+        
         response = ai.format_homeworks(homeworks)
         await update.message.reply_text(response, parse_mode='Markdown')
-    
+
     async def show_stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """İstatistikleri göster (haftalık)"""
         user_id = update.effective_user.id
         
-        # Çalışma kayıtları
+        # Son 7 günün istatistikleri
         study_records = db.get_study_records(user_id, days=7)
-        study_text = ai.format_study_records(study_records)
-        
-        # Soru istatistikleri
         question_stats = db.get_question_stats(user_id, days=7)
-        stats_text = ai.format_question_stats(question_stats)
         
-        response = f"{study_text}\n\n{stats_text}"
+        response = "*📊 Haftalık İstatistikler*\n\n"
+        
+        if study_records:
+            total_time = sum(s['sure_dakika'] for s in study_records)
+            response += f"⏱️ *Toplam Çalışma:* {total_time} dakika\n"
+        else:
+            response += "⏱️ Henüz çalışma kaydı yok.\n"
+            
+        if question_stats['toplam'] > 0:
+            response += f"✏️ *Toplam Soru:* {question_stats['toplam']} ({question_stats['dogru']} D / {question_stats['yanlis']} Y)\n"
+        else:
+            response += "✏️ Henüz soru çözümü yok.\n"
+            
         await update.message.reply_text(response, parse_mode='Markdown')
-    
+
     async def today_summary_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Bugünkü özet"""
         user_id = update.effective_user.id
-        
-        # Bugünkü çalışmalar
         today_studies = db.get_today_study_records(user_id)
-        
-        # Bugünkü sorular
         today_questions = db.get_today_question_stats(user_id)
         
-        from datetime import date
-        today_str = date.today().strftime("%d.%m.%Y")
+        response = f"*Bugünkü Özet ({date.today().strftime('%d.%m.%Y')})*\n\n"
         
-        response = f"📅 *Bugünkü Özet ({today_str})*\n\n"
-        
-        # Çalışmalar
         if today_studies:
-            response += "📚 *Çalışmalar:*\n"
+            response += "*Çalışmalar:*\n"
             for study in today_studies:
-                response += f"• {study['ders_adi']}"
-                if study.get('konu'):
-                    response += f" - {study['konu']}"
-                if study.get('sure_dakika'):
-                    sure = study['sure_dakika']
-                    saat = sure // 60
-                    dakika = sure % 60
-                    if saat > 0:
-                        response += f" ({saat}sa"
-                        if dakika > 0:
-                            response += f" {dakika}dk"
-                        response += ")"
-                    elif dakika > 0:
-                        response += f" ({dakika}dk)"
-                response += "\n"
+                response += f"- {study['ders_adi']}\n"
             response += "\n"
         else:
-            response += "📚 Bugün henüz çalışma kaydın yok.\n\n"
+            response += "Bugün henüz çalışma kaydın yok.\n\n"
         
-        # Sorular
         if today_questions['toplam'] > 0:
-            response += f"✏️ *Sorular:* {today_questions['toplam']} soru\n"
-            if today_questions['ders_bazinda']:
-                for ders in today_questions['ders_bazinda']:
-                    response += f"  • {ders['ders_adi']}: {ders['toplam']} soru"
-                    if ders.get('konular'):
-                        response += f" ({ders['konular']})"
-                    response += "\n"
+            response += f"*Sorular:* {today_questions['toplam']} soru\n"
         else:
-            response += "✏️ Bugün henüz soru çözmedin.\n"
-        
-        if not today_studies and today_questions['toplam'] == 0:
-            response += "\n💪 Hadi, bugün biraz çalış!"
-        elif today_questions['toplam'] > 0 or today_studies:
-            response += "\n🎉 Harika gidiyorsun!"
+            response += "Bugün henüz soru çözmedin.\n"
         
         await update.message.reply_text(response, parse_mode='Markdown')
     
     async def weekly_summary_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Haftalık özet"""
+        """Haftalık detaylı özet"""
         user_id = update.effective_user.id
         
-        # Haftalık çalışmalar
+        # Son 7 günün verileri
         study_records = db.get_study_records(user_id, days=7)
-        
-        # Haftalık sorular
         question_stats = db.get_question_stats(user_id, days=7)
         
-        response = "📊 *Bu Haftanın Özeti (Son 7 Gün)*\n\n"
+        response = "*📅 Bu Haftanın Özeti*\n\n"
         
         # Çalışma istatistikleri
         if study_records:
-            response += f"📚 *Çalışmalar:* {len(study_records)} kayıt\n\n"
-            # Ders bazında grupla
             from collections import defaultdict
             ders_sayaci = defaultdict(int)
             toplam_sure = 0
+            
             for study in study_records:
                 ders_sayaci[study['ders_adi']] += 1
                 if study.get('sure_dakika'):
@@ -569,3 +432,23 @@ Benimle doğal dilde konuşabilirsin! 💪
             response += "\n🎉 Böyle devam et!"
         
         await update.message.reply_text(response, parse_mode='Markdown')
+
+    def register_handlers(self, application: Application):
+        """Ders modülü özel handler'ları"""
+        from telegram.ext import CommandHandler, MessageHandler, filters
+        
+        application.add_handler(CommandHandler("program_yukle", self.load_schedule_command))
+        application.add_handler(CommandHandler("program_sifirla", self.reset_schedule_command))
+        application.add_handler(CommandHandler("derslerim", self.list_lessons_command))
+        application.add_handler(CommandHandler("odevlerim", self.list_homeworks_command))
+        application.add_handler(CommandHandler("istatistik", self.show_stats_command))
+        application.add_handler(CommandHandler("bugun", self.today_summary_command))
+        application.add_handler(CommandHandler("gunluk", self.today_summary_command))
+        application.add_handler(CommandHandler("haftalik", self.weekly_summary_command))
+        application.add_handler(CommandHandler("bu_hafta", self.weekly_summary_command))
+        
+        # CSV dosya handler
+        application.add_handler(MessageHandler(
+            filters.Document.MimeType("text/csv") | filters.Document.FileExtension("csv"),
+            self.handle_csv_document
+        ))
