@@ -34,7 +34,7 @@ def transcribe_voice_gemini(audio_path: str) -> dict:
         audio_file = genai.upload_file(audio_path)
         
         # Model oluştur
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        model = genai.GenerativeModel('gemini-3.0-flash')
         
         # Transcription prompt
         prompt = """Bu ses dosyasını dinle ve içindeki konuşmayı Türkçe olarak yazıya dök.
