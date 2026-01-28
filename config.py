@@ -20,6 +20,9 @@ LOCAL_MODEL_NAME = os.getenv("LOCAL_MODEL_NAME", "gemini-3-flash")
 # Gemini API (opsiyonel)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
+# Groq API (Alternatif hızlı STT)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+
 # Hatırlatma ayarları
 REMINDER_START_HOUR = int(os.getenv("REMINDER_START_HOUR", "8"))
 REMINDER_END_HOUR = int(os.getenv("REMINDER_END_HOUR", "22"))
