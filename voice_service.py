@@ -1,61 +1,66 @@
 """
 Voice Service - Sesli mesajları text'e çevirme
-Gemini API'nin audio desteğini kullanır
+Groq API (Whisper) kullanarak hızlı ve ücretsiz çeviri yapar
 """
 import os
 import tempfile
-import google.generativeai as genai
-from config import GEMINI_API_KEY, API_MODE, LOCAL_API_URL, LOCAL_API_KEY, LOCAL_MODEL_NAME
+import requests
+from config import GROQ_API_KEY, GEMINI_API_KEY
 
-# Gemini API'yi yapılandır
-if GEMINI_API_KEY:
+if not GROQ_API_KEY and GEMINI_API_KEY:
+    import google.generativeai as genai
     genai.configure(api_key=GEMINI_API_KEY)
 
 
-def transcribe_voice_gemini(audio_path: str) -> dict:
+def transcribe_voice_groq(audio_path: str) -> dict:
     """
-    Gemini API ile ses dosyasını text'e çevir
+    Groq API ile ses dosyasını text'e çevir
     
     Args:
-        audio_path: Ses dosyasının yolu (.ogg, .mp3, .wav, .m4a)
+        audio_path: Ses dosyasının yolu
         
     Returns:
         dict: {'success': bool, 'text': str, 'error': str}
     """
     try:
-        if not GEMINI_API_KEY:
+        if not GROQ_API_KEY:
             return {
                 'success': False,
                 'text': '',
-                'error': 'Gemini API key bulunamadı'
+                'error': 'GROQ API key bulunamadı'
             }
+            
+        url = "https://api.groq.com/openai/v1/audio/transcriptions"
         
-        # Dosyayı yükle
-        audio_file = genai.upload_file(audio_path)
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}"
+        }
         
-        # Model oluştur
-        model = genai.GenerativeModel('gemini-3.0-flash')
+        # Dosyayı oku
+        with open(audio_path, 'rb') as f:
+            file_data = f.read()
         
-        # Transcription prompt
-        prompt = """Bu ses dosyasını dinle ve içindeki konuşmayı Türkçe olarak yazıya dök.
+        # Multipart form data
+        files = {
+            'file': ('voice.ogg', file_data, 'audio/ogg'),
+            'model': (None, 'whisper-large-v3'),
+            'language': (None, 'tr')  # Türkçe zorla
+        }
         
-Sadece konuşmanın metnini yaz, başka açıklama ekleme.
-Eğer ses net değilse, anladığın kadarını yaz."""
+        response = requests.post(url, headers=headers, files=files)
         
-        # Generate content
-        response = model.generate_content([prompt, audio_file])
-        
-        if response.text:
+        if response.status_code == 200:
+            result = response.json()
             return {
                 'success': True,
-                'text': response.text.strip(),
+                'text': result.get('text', '').strip(),
                 'error': ''
             }
         else:
             return {
                 'success': False,
                 'text': '',
-                'error': 'Gemini yanıt vermedi'
+                'error': f'Groq Error: {response.text}'
             }
             
     except Exception as e:
@@ -66,16 +71,26 @@ Eğer ses net değilse, anladığın kadarını yaz."""
         }
 
 
+def transcribe_voice_gemini(audio_path: str) -> dict:
+    """Yedek olarak Gemini kullan"""
+    try:
+        import google.generativeai as genai
+        # Dosyayı yükle
+        audio_file = genai.upload_file(audio_path)
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        
+        prompt = "Bu sesi Türkçe yazıya dök. Sadece dediklerini yaz."
+        response = model.generate_content([prompt, audio_file])
+        
+        return {'success': True, 'text': response.text.strip(), 'error': ''}
+    except Exception as e:
+        return {'success': False, 'text': '', 'error': str(e)}
+
+
 async def transcribe_telegram_voice(bot, voice_file_id: str) -> dict:
     """
     Telegram sesli mesajını indir ve transcribe et
-    
-    Args:
-        bot: Telegram bot instance
-        voice_file_id: Telegram dosya ID'si
-        
-    Returns:
-        dict: {'success': bool, 'text': str, 'error': str}
+    Önce Groq dener, başarısız olursa Gemini dener (eğer key varsa)
     """
     temp_path = None
     try:
@@ -89,10 +104,21 @@ async def transcribe_telegram_voice(bot, voice_file_id: str) -> dict:
         # Dosyayı kaydet
         await file.download_to_drive(temp_path)
         
-        # Transcribe et
-        result = transcribe_voice_gemini(temp_path)
+        # 1. Öncelik: Groq API
+        if GROQ_API_KEY:
+            result = transcribe_voice_groq(temp_path)
+            if result['success']:
+                return result
         
-        return result
+        # 2. Öncelik: Gemini API (Yedek)
+        if GEMINI_API_KEY:
+            return transcribe_voice_gemini(temp_path)
+            
+        return {
+            'success': False, 
+            'text': '', 
+            'error': 'Aktif bir Speech-to-Text servisi bulunamadı (Groq veya Gemini)'
+        }
         
     except Exception as e:
         return {
