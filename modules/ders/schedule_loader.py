@@ -214,3 +214,4 @@ def load_schedule_data(user_id: int):
             )
     
     return True
+

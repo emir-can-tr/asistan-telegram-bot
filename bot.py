@@ -9,6 +9,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 import database
 from config import TELEGRAM_BOT_TOKEN
 import scheduler
+import voice_service
 import logging
 
 # Logging konfigürasyonu
@@ -243,6 +244,74 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await module_instance.handle_message(update, context, db_user)
 
 
+async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Sesli mesajları text'e çevir ve aktif modüle yönlendir"""
+    user = update.effective_user
+    
+    # Kullanıcıyı al
+    db_user = database.get_or_create_user(
+        telegram_id=user.id,
+        username=user.username,
+        first_name=user.first_name
+    )
+    
+    # İşleniyor mesajı
+    processing_msg = await update.message.reply_text("🎤 Sesli mesaj işleniyor...")
+    
+    try:
+        # Voice veya audio file ID'sini al
+        if update.message.voice:
+            file_id = update.message.voice.file_id
+        elif update.message.audio:
+            file_id = update.message.audio.file_id
+        else:
+            await processing_msg.edit_text("❌ Ses dosyası bulunamadı.")
+            return
+        
+        # Transcribe et
+        result = await voice_service.transcribe_telegram_voice(context.bot, file_id)
+        
+        if not result['success']:
+            await processing_msg.edit_text(f"❌ Ses çevirme hatası: {result['error']}")
+            return
+        
+        transcribed_text = result['text']
+        
+        if not transcribed_text:
+            await processing_msg.edit_text("❌ Ses anlaşılamadı. Lütfen tekrar dene.")
+            return
+        
+        # Transcription'u göster
+        await processing_msg.edit_text(f"📝 *Anladığım:*\n{transcribed_text}", parse_mode='Markdown')
+        
+        # Aktif modüle yönlendir
+        current_module = database.get_user_current_module(db_user['id'])
+        module_instance = modules[current_module]
+        
+        # Fake message objesi oluştur
+        # Not: Bu basit bir yaklaşım, daha ileri seviye için message kopyalanabilir
+        class FakeMessage:
+            def __init__(self, text, original_message):
+                self.text = text
+                self.reply_text = original_message.reply_text
+                self.chat = original_message.chat
+                self.from_user = original_message.from_user
+        
+        class FakeUpdate:
+            def __init__(self, message, original_update):
+                self.message = message
+                self.effective_user = original_update.effective_user
+        
+        fake_message = FakeMessage(transcribed_text, update.message)
+        fake_update = FakeUpdate(fake_message, update)
+        
+        await module_instance.handle_message(fake_update, context, db_user)
+        
+    except Exception as e:
+        logger.error(f"Voice message error: {e}")
+        await processing_msg.edit_text(f"❌ Hata: {str(e)}")
+
+
 # ==================== HATA İŞLEYİCİ ====================
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -317,6 +386,9 @@ def main():
     
     # Mesaj işleyici ekle (tüm text mesajları)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Sesli mesaj işleyici
+    application.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice_message))
     
     # Hata işleyici ekle
     application.add_error_handler(error_handler)
